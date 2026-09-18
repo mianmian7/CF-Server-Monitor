@@ -1945,6 +1945,8 @@ const copyUninstallCmd = async () => {
   }, 1500)
 }
 
+const normalizeStoredPingNodeForForm = (value) => value === 0 || value === '0' ? '0' : (value ?? '')
+
 const createEditFormFromServer = (server) => ({
     id: server.id,
     name: server.name || '',
@@ -1966,11 +1968,11 @@ const createEditFormFromServer = (server) => ({
     wss_report_interval: server.wss_report_interval || 2,
     connection_mode: getEffectiveConnectionMode(server.connection_mode),
     ping_mode: server.ping_mode === 'icmp' ? 'icmp' : 'tcp',
-    custom_ct: server.custom_ct ?? '',
-    custom_cu: server.custom_cu ?? '',
-    custom_cm: server.custom_cm ?? '',
-    custom_bd: server.custom_bd ?? '',
-    node_1: server.node_1 ?? '', node_2: server.node_2 ?? '', node_3: server.node_3 ?? '', node_4: server.node_4 ?? '',
+    custom_ct: normalizeStoredPingNodeForForm(server.custom_ct),
+    custom_cu: normalizeStoredPingNodeForForm(server.custom_cu),
+    custom_cm: normalizeStoredPingNodeForForm(server.custom_cm),
+    custom_bd: normalizeStoredPingNodeForForm(server.custom_bd),
+    node_1: normalizeStoredPingNodeForForm(server.node_1), node_2: normalizeStoredPingNodeForForm(server.node_2), node_3: normalizeStoredPingNodeForForm(server.node_3), node_4: normalizeStoredPingNodeForForm(server.node_4),
     rx_correction: server.rx_correction ?? '',
     tx_correction: server.tx_correction ?? '',
     auto_update: server.auto_update === '1' || server.auto_update === 1 || server.auto_update === true,

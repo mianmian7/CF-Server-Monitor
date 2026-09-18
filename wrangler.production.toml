@@ -1,0 +1,29 @@
+# Local production deployment config.
+# API_SECRET is uploaded separately from ~/.config/cf-server-monitor/secrets.env.
+name = "cf-server-monitor"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+keep_vars = true
+workers_dev = true
+routes = [{ pattern = "monitor.glmyyava.com", custom_domain = true }]
+
+[triggers]
+crons = ["*/1 * * * *", "0 * * * *"]
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "server-monitor-db"
+database_id = "e1c5f747-ced6-4aa7-84aa-2f243f788486"
+
+[[durable_objects.bindings]]
+name = "METRICS_BROADCASTER"
+class_name = "MetricsBroadcaster"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MetricsBroadcaster"]

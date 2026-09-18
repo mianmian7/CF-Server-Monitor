@@ -5,7 +5,7 @@
         <div class="three-net-row" v-for="row in threeNetDetails" :key="'ping-' + row.key">
           <div class="three-net-head">
             <span class="three-net-name">{{ row.label }}</span>
-            <strong class="three-net-value" :style="{ color: getPingColor(row.latestPing) }">{{ formatPingValue(row.latestPing) }}</strong>
+            <strong class="three-net-value" :style="{ color: getPingColor(row.latestPing, row.averageLoss) }">{{ formatPingValue(row.latestPing, row.averageLoss) }}</strong>
           </div>
           <div class="three-net-buckets">
             <span
@@ -22,7 +22,7 @@
       <div class="three-net-column" aria-label="Loss">
         <div class="three-net-row" v-for="row in threeNetDetails" :key="'loss-' + row.key">
           <div class="three-net-head three-net-head-loss">
-            <strong class="three-net-value" :style="{ color: getLossColor(row.averageLoss) }">{{ formatLossValue(row.averageLoss) }}</strong>
+            <strong class="three-net-value" :style="{ color: getLossColor(row.averageLoss) }">{{ formatLossValue(row.averageLoss, row.latestPing) }}</strong>
           </div>
           <div class="three-net-buckets">
             <span
@@ -42,13 +42,13 @@
     <template v-if="variant === 'ring'">
       <span class="server-card-ping-chip" v-for="p in pingList.filter(x => x.value !== 0).slice(0, 4)" :key="p.label">
         <span class="server-card-ping-label">{{ p.label }}</span>
-        <span class="server-card-ping-val" :style="{ color: getPingColor(p.value) }">{{ isPingValid(p.value) ? p.value + 'ms' : timeoutText }}</span>
+        <span class="server-card-ping-val" :style="{ color: getPingColor(p.value, p.loss) }">{{ formatPingValue(p.value, p.loss) }}</span>
       </span>
     </template>
     <template v-else>
       <div class="ping-item" v-for="p in pingList.filter(x => x.value !== 0).slice(0, 4)" :key="p.label">
         <span class="ping-label">{{ p.label }}</span>
-        <span class="ping-value" :style="{ color: getPingColor(p.value) }">{{ !isPingValid(p.value) ? timeoutText : p.value + 'ms' }}</span>
+        <span class="ping-value" :style="{ color: getPingColor(p.value, p.loss) }">{{ formatPingValue(p.value, p.loss) }}</span>
       </div>
     </template>
   </div>

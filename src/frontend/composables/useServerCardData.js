@@ -4,6 +4,7 @@ import { getPublicAssetUrl } from '../utils/config'
 import { currentLang, useTranslation } from '../utils/i18n'
 import { LATENCY_WINDOW, PING } from '../utils/constants'
 import { formatBillingPrice } from '../utils/server.js'
+import { isDisabledProbeValue, shouldShowThreeNetProbe } from '../utils/probeDisplay.js'
 
 export const DEFAULT_SERVER_CARD_CONFIG = {
   show_price: true,
@@ -276,9 +277,23 @@ export function useServerCardData(props) {
     return val > 0
   }
 
-  const isPingDisabled = (ping) => ping === false || ping === 'false'
+  const isPingDisabled = isDisabledProbeValue
+  const noSampleText = computed(() => currentLang.value === 'zh' ? '无样本' : 'No samples')
+  const neutralProbeColor = 'rgba(255, 255, 255, 0.08)'
+  const isMissingProbeMetric = (value) => value === null || value === undefined || value === ''
+  const hasPositiveLoss = (value) => {
+    const normalized = normalizeProbeMetricValue(value)
+    return typeof normalized === 'number' && Number.isFinite(normalized) && normalized > 0
+  }
+  const getProbeStatus = (ping, loss) => {
+    if (isPingDisabled(ping) && isPingDisabled(loss)) return 'disabled'
+    if (isPingValid(ping)) return 'value'
+    if (isMissingProbeMetric(ping) && !hasPositiveLoss(loss)) return 'no-sample'
+    return 'timeout'
+  }
 
-  const getPingColor = (ping) => {
+  const getPingColor = (ping, loss = null) => {
+    if (getProbeStatus(ping, loss) === 'no-sample') return neutralProbeColor
     if (!isPingValid(ping)) return 'var(--accent-red)'
     const val = parseInt(ping)
     if (val < PING.GOOD_THRESHOLD) return 'var(--accent-green)'
@@ -289,16 +304,26 @@ export function useServerCardData(props) {
 
   const getLossColor = (loss) => {
     const value = normalizeProbeMetricValue(loss)
-    if (value === null || value === false) return 'rgba(255, 255, 255, 0.08)'
+    if (value === null || value === false) return neutralProbeColor
     if (value <= 0) return 'var(--accent-green)'
     if (value < 5) return 'var(--accent-blue)'
     if (value < 20) return 'var(--accent-yellow)'
     return 'var(--accent-red)'
   }
 
-  const formatPingValue = (value) => isPingValid(value) ? `${Math.round(Number(value))}ms` : trans.value.timeout
-  const formatLossValue = (value) => formatPercentValue(normalizeProbeMetricValue(value))
-  const noSampleText = computed(() => currentLang.value === 'zh' ? '无样本' : 'No samples')
+  const formatPingValue = (value, loss = null) => {
+    const status = getProbeStatus(value, loss)
+    if (status === 'value') return `${Math.round(Number(value))}ms`
+    if (status === 'no-sample' || status === 'disabled') return noSampleText.value
+    return trans.value.timeout
+  }
+
+  const formatLossValue = (value, ping = null) => {
+    const normalized = normalizeProbeMetricValue(value)
+    if (typeof normalized === 'number' && Number.isFinite(normalized)) return formatPercentValue(normalized)
+    if (isMissingProbeMetric(value) || isPingDisabled(value)) return noSampleText.value
+    return trans.value.timeout
+  }
 
   const formatLatencyTimeText = (timestamp) => {
     const startTs = normalizeLatencyTimestamp(timestamp, 0)
@@ -312,9 +337,10 @@ export function useServerCardData(props) {
     return timeText ? `${timeText} · ${summary}` : summary
   }
 
-  const formatPingBucketSummary = (hasPing, ping, offline) => {
+  const formatPingBucketSummary = (hasPing, ping, loss, offline) => {
     if (offline) return trans.value.offline
     if (hasPing) return `${trimFixed(ping, 1)} ms`
+    if (hasPositiveLoss(loss)) return trans.value.timeout
     return noSampleText.value
   }
 
@@ -370,6 +396,7 @@ export function useServerCardData(props) {
   }
 
   const threeNetDetails = computed(() => THREE_NET_DEFS
+    .filter(def => shouldShowThreeNetProbe(props.server, def))
     .map(def => {
       const customName = props.sysConfig?.[`custom_${def.key}_name`]
       const label = String(customName || trans.value[def.labelKey] || def.fallbackLabel)
@@ -384,18 +411,17 @@ export function useServerCardData(props) {
         const timestamp = pingPoint?.ts ?? lossPoint?.ts ?? null
         const hasPing = typeof ping === 'number' && Number.isFinite(ping) && ping >= 0
         const hasLoss = typeof loss === 'number' && Number.isFinite(loss)
-        const offline = !hasPing && !hasLoss
-        const pingSummary = formatPingBucketSummary(hasPing, ping, offline)
-        const lossSummary = formatLossBucketSummary(hasLoss, loss, offline)
+        const pingSummary = formatPingBucketSummary(hasPing, ping, loss, false)
+        const lossSummary = formatLossBucketSummary(hasLoss, loss, false)
         return {
           ping,
           loss,
           pingHeight: hasPing ? 84 : 25,
           lossHeight: hasLoss ? 84 : 25,
-          pingColor: hasPing ? getPingColor(ping) : 'var(--accent-red)',
-          lossColor: offline ? 'var(--accent-red)' : getLossColor(loss),
+          pingColor: hasPing ? getPingColor(ping, loss) : (hasPositiveLoss(loss) ? 'var(--accent-red)' : neutralProbeColor),
+          lossColor: hasLoss ? getLossColor(loss) : neutralProbeColor,
           pingOpacity: hasPing ? 0.94 : 0.52,
-          lossOpacity: hasLoss ? 0.94 : (offline ? 0.52 : 0.42),
+          lossOpacity: hasLoss ? 0.94 : 0.42,
           pingTooltip: formatBucketTooltip(timestamp, pingSummary),
           lossTooltip: formatBucketTooltip(timestamp, lossSummary)
         }
@@ -410,7 +436,7 @@ export function useServerCardData(props) {
         label,
         latestPing: getLatestSeriesValue(pingSeries, props.server[def.pingField]),
         averageLoss: getAverageSeriesValue(lossSeries, props.server[def.lossField]),
-        title: hasMeasuredPoint ? '' : `${label} ${trans.value.offline}`,
+        title: hasMeasuredPoint ? '' : `${label} ${noSampleText.value}`,
         points
       }
     })
@@ -419,15 +445,15 @@ export function useServerCardData(props) {
   const hasThreeNetDetails = computed(() => threeNetDetails.value.length > 0)
 
   const pingList = computed(() => [
-    { label: 'CT', value: props.server.ping_ct },
-    { label: 'CU', value: props.server.ping_cu },
-    { label: 'CM', value: props.server.ping_cm },
-    { label: 'BGP', value: props.server.ping_bd },
-    { label: props.server.node_1_name || 'Node 1', value: props.server.ping_node_1 },
-    { label: props.server.node_2_name || 'Node 2', value: props.server.ping_node_2 },
-    { label: props.server.node_3_name || 'Node 3', value: props.server.ping_node_3 },
-    { label: props.server.node_4_name || 'Node 4', value: props.server.ping_node_4 }
-  ].filter(ping => !isPingDisabled(ping.value)))
+    { label: 'CT', value: props.server.ping_ct, loss: props.server.loss_ct },
+    { label: 'CU', value: props.server.ping_cu, loss: props.server.loss_cu },
+    { label: 'CM', value: props.server.ping_cm, loss: props.server.loss_cm },
+    { label: 'BGP', value: props.server.ping_bd, loss: props.server.loss_bd },
+    { label: props.server.node_1_name || 'Node 1', value: props.server.ping_node_1, loss: props.server.loss_node_1 },
+    { label: props.server.node_2_name || 'Node 2', value: props.server.ping_node_2, loss: props.server.loss_node_2 },
+    { label: props.server.node_3_name || 'Node 3', value: props.server.ping_node_3, loss: props.server.loss_node_3 },
+    { label: props.server.node_4_name || 'Node 4', value: props.server.ping_node_4, loss: props.server.loss_node_4 }
+  ].filter(ping => !(isPingDisabled(ping.value) && isPingDisabled(ping.loss))))
 
   const hasPingData = computed(() => pingList.value.length > 0)
 

@@ -102,7 +102,7 @@ function normalizeCspOrigin(value) {
   }
 }
 
-function normalizePingNodeFields(source, fields = PING_NODE_FIELDS) {
+export function normalizePingNodeFields(source, fields = PING_NODE_FIELDS) {
   const values = {};
   for (const field of fields) {
     if (source?.[field] === undefined) continue;
@@ -116,8 +116,10 @@ function normalizePingNodeFields(source, fields = PING_NODE_FIELDS) {
   return { valid: true, values };
 }
 
-function normalizeImportedPingNodeValue(value) {
-  return value === null || value === undefined ? '' : value;
+export function normalizeImportedPingNodeValue(value) {
+  if (value === null) return null;
+  if (value === 0 || value === '0') return '0';
+  return value === undefined ? '' : value;
 }
 
 function normalizeNetworkInterfaceField(value) {
