@@ -278,7 +278,7 @@ export function useServerCardData(props) {
   }
 
   const isPingDisabled = isDisabledProbeValue
-  const noSampleText = computed(() => currentLang.value === 'zh' ? '无样本' : 'No samples')
+  const noSampleText = computed(() => trans.value.noSamples || (currentLang.value === 'zh' ? '无样本' : 'No samples'))
   const neutralProbeColor = 'rgba(255, 255, 255, 0.08)'
   const isMissingProbeMetric = (value) => value === null || value === undefined || value === ''
   const hasPositiveLoss = (value) => {
