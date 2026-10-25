@@ -2,39 +2,115 @@ name: Upstream Sync
 
 permissions:
   contents: write
+  pull-requests: write
 
 on:
   schedule:
-    - cron: "0 0 * * *" # every day
+    - cron: "0 0 * * *" # every day, UTC
   workflow_dispatch:
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
 
 jobs:
   sync_latest_from_upstream:
     name: Sync latest commits from upstream repo
     runs-on: ubuntu-latest
     if: ${{ github.event.repository.fork }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
 
     steps:
-      # Step 1: run a standard checkout action
       - name: Checkout target repo
-        uses: actions/checkout@v3
-
-      # Step 2: run the sync action
-      - name: Sync upstream changes
-        id: sync
-        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+        uses: actions/checkout@v4
         with:
-          upstream_sync_repo: huilang-me/CF-Server-Monitor
-          upstream_sync_branch: main
-          target_sync_branch: main
-          target_repo_token: ${{ secrets.GITHUB_TOKEN }} # automatically generated, no need to set
+          ref: main
+          fetch-depth: 0
 
-          # Set test_mode true to run tests instead of the true action!!
-          test_mode: false
-
-      - name: Sync check
-        if: failure()
+      - name: Check pending sync review
+        id: pending
         run: |
-          echo "[Error] 由于上游仓库的 workflow 文件变更，导致 GitHub 自动暂停了本次自动更新，请前往仓库页面手动执行 Sync Fork 操作。"
-          echo "[Error] Due to a change in the workflow file of the upstream repository, GitHub has automatically suspended the scheduled automatic update. You need to manually sync your fork."
-          exit 1
+          number=$(gh pr list --base main --state open --json number,headRefName --jq '[.[] | select(.headRefName | startswith("sync/upstream-"))][0].number // empty')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          if [ -n "$number" ]; then
+            echo "Upstream sync PR #$number is awaiting review; no new sync attempted." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Merge upstream without replacing fork changes
+        if: steps.pending.outputs.number == ''
+        id: merge
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/huilang-me/CF-Server-Monitor.git
+          git fetch upstream main
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already contains upstream/main." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          branch="sync/upstream-$(git rev-parse --short=12 upstream/main)-$(git rev-parse --short=12 HEAD)"
+          git switch -c "$branch"
+          if ! git merge --no-commit --no-ff upstream/main; then
+            mkdir -p "$RUNNER_TEMP/upstream-sync-conflict"
+            git diff --name-only --diff-filter=U > "$RUNNER_TEMP/upstream-sync-conflict/files.txt"
+            git diff > "$RUNNER_TEMP/upstream-sync-conflict/merge.diff"
+            {
+              echo '### Upstream merge failed'
+              echo 'No changes were pushed. Inspect the merge output and conflict artifact.'
+              cat "$RUNNER_TEMP/upstream-sync-conflict/files.txt"
+            } >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort
+            echo '::error::Upstream merge failed; inspect conflict files and logs. No automatic resolution was applied.'
+            exit 1
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Upload conflict diagnostics
+        if: failure() && steps.merge.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-sync-conflict
+          path: ${{ runner.temp }}/upstream-sync-conflict
+          if-no-files-found: ignore
+
+      - name: Setup Node.js
+        if: steps.merge.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Validate merged code
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          npm ci --no-audit --no-fund
+          npm run test:all
+          npm run build
+
+      - name: Create reviewable sync PR
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          SYNC_BRANCH: ${{ steps.merge.outputs.branch }}
+        run: |
+          git commit -m "Merge upstream/main preserving fork customizations"
+          # Never force-push and never update main here. Reuse an identical branch after a retry.
+          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$SYNC_BRANCH"
+            if [ "$(git rev-parse HEAD^{tree})" != "$(git rev-parse FETCH_HEAD^{tree})" ]; then
+              echo '::error::Existing sync branch differs; review it manually before retrying.'
+              exit 1
+            fi
+          else
+            git push origin "HEAD:refs/heads/$SYNC_BRANCH"
+          fi
+          cat > "$RUNNER_TEMP/sync-pr-body.md" <<'BODY'
+          Merge upstream/main using a normal two-parent merge; preserve fork-specific changes.
+
+          Validation before publishing: npm ci, npm run test:all (including fork probe display regressions), npm run build.
+
+          Review and merge with a merge commit. Do not squash or rebase this sync PR: upstream ancestry must remain recorded to avoid replaying already resolved changes.
+          BODY
+          gh pr create --base main --head "$SYNC_BRANCH" --title 'Sync upstream while preserving fork customizations' --body-file "$RUNNER_TEMP/sync-pr-body.md"
